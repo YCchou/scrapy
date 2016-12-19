@@ -1,5 +1,6 @@
 import re
 import logging
+import six
 
 from scrapy.spiders import Spider
 from scrapy.http import Request, XmlResponse
@@ -20,17 +21,18 @@ class SitemapSpider(Spider):
         super(SitemapSpider, self).__init__(*a, **kw)
         self._cbs = []
         for r, c in self.sitemap_rules:
-            if isinstance(c, basestring):
+            if isinstance(c, six.string_types):
                 c = getattr(self, c)
             self._cbs.append((regex(r), c))
         self._follow = [regex(x) for x in self.sitemap_follow]
 
     def start_requests(self):
-        return (Request(x, callback=self._parse_sitemap) for x in self.sitemap_urls)
+        for url in self.sitemap_urls:
+            yield Request(url, self._parse_sitemap)
 
     def _parse_sitemap(self, response):
         if response.url.endswith('/robots.txt'):
-            for url in sitemap_urls_from_robots(response.body):
+            for url in sitemap_urls_from_robots(response.text, base_url=response.url):
                 yield Request(url, callback=self._parse_sitemap)
         else:
             body = self._get_sitemap_body(response)
@@ -52,8 +54,8 @@ class SitemapSpider(Spider):
                             break
 
     def _get_sitemap_body(self, response):
-        """Return the sitemap body contained in the given response, or None if the
-        response is not a sitemap.
+        """Return the sitemap body contained in the given response,
+        or None if the response is not a sitemap.
         """
         if isinstance(response, XmlResponse):
             return response.body
@@ -64,10 +66,12 @@ class SitemapSpider(Spider):
         elif response.url.endswith('.xml.gz'):
             return gunzip(response.body)
 
+
 def regex(x):
-    if isinstance(x, basestring):
+    if isinstance(x, six.string_types):
         return re.compile(x)
     return x
+
 
 def iterloc(it, alt=False):
     for d in it:

@@ -38,7 +38,7 @@ def iflatten(x):
     Similar to ``.flatten()``, but returns iterator instead"""
     for el in x:
         if is_listlike(el):
-            for el_ in flatten(el):
+            for el_ in iflatten(el):
                 yield el_
         else:
             yield el
@@ -174,17 +174,25 @@ def memoizemethod_noargs(method):
         return cache[self]
     return new_method
 
+
 _BINARYCHARS = {six.b(chr(i)) for i in range(32)} - {b"\0", b"\t", b"\n", b"\r"}
 _BINARYCHARS |= {ord(ch) for ch in _BINARYCHARS}
 
-
+@deprecated("scrapy.utils.python.binary_is_text")
 def isbinarytext(text):
-    """Return True if the given text is considered binary, or False
-    otherwise, by looking for binary bytes at their chars
+    """ This function is deprecated.
+    Please use scrapy.utils.python.binary_is_text, which was created to be more
+    clear about the functions behavior: it is behaving inverted to this one. """
+    return not binary_is_text(text)
+
+
+def binary_is_text(data):
+    """ Returns `True` if the given ``data`` argument (a ``bytes`` object)
+    does not contain unprintable control characters.
     """
-    if not isinstance(text, bytes):
-        raise TypeError("text must be bytes, got '%s'" % type(text).__name__)
-    return any(c in _BINARYCHARS for c in text)
+    if not isinstance(data, bytes):
+        raise TypeError("data must be bytes, got '%s'" % type(data).__name__)
+    return all(c not in _BINARYCHARS for c in data)
 
 
 def get_func_args(func, stripself=False):
@@ -257,20 +265,14 @@ def equal_attributes(obj1, obj2, attributes):
     if not attributes:
         return False
 
+    temp1, temp2 = object(), object()
     for attr in attributes:
         # support callables like itemgetter
         if callable(attr):
-            if not attr(obj1) == attr(obj2):
+            if attr(obj1) != attr(obj2):
                 return False
-        else:
-            # check that objects has attribute
-            if not hasattr(obj1, attr):
-                return False
-            if not hasattr(obj2, attr):
-                return False
-            # compare object attributes
-            if not getattr(obj1, attr) == getattr(obj2, attr):
-                return False
+        elif getattr(obj1, attr, temp1) != getattr(obj2, attr, temp2):
+            return False
     # all attributes equal
     return True
 
@@ -330,3 +332,15 @@ def retry_on_eintr(function, *args, **kw):
         except IOError as e:
             if e.errno != errno.EINTR:
                 raise
+
+
+def without_none_values(iterable):
+    """Return a copy of `iterable` with all `None` entries removed.
+
+    If `iterable` is a mapping, return a dictionary where all pairs that have
+    value `None` have been removed.
+    """
+    try:
+        return {k: v for k, v in six.iteritems(iterable) if v is not None}
+    except AttributeError:
+        return type(iterable)((v for v in iterable if v is not None))

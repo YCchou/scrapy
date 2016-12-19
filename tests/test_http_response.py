@@ -7,6 +7,7 @@ from scrapy.http import (Request, Response, TextResponse, HtmlResponse,
                          XmlResponse, Headers)
 from scrapy.selector import Selector
 from scrapy.utils.python import to_native_str
+from scrapy.exceptions import NotSupported
 
 
 class BaseResponseTest(unittest.TestCase):
@@ -17,6 +18,8 @@ class BaseResponseTest(unittest.TestCase):
         # Response requires url in the consturctor
         self.assertRaises(Exception, self.response_class)
         self.assertTrue(isinstance(self.response_class('http://example.com/'), self.response_class))
+        if not six.PY2:
+            self.assertRaises(TypeError, self.response_class, b"http://example.com")
         # body can be str or None
         self.assertTrue(isinstance(self.response_class('http://example.com/', body=b''), self.response_class))
         self.assertTrue(isinstance(self.response_class('http://example.com/', body=b'body'), self.response_class))
@@ -105,9 +108,11 @@ class BaseResponseTest(unittest.TestCase):
             body_bytes = body
 
         assert isinstance(response.body, bytes)
+        assert isinstance(response.text, six.text_type)
         self._assert_response_encoding(response, encoding)
         self.assertEqual(response.body, body_bytes)
         self.assertEqual(response.body_as_unicode(), body_unicode)
+        self.assertEqual(response.text, body_unicode)
 
     def _assert_response_encoding(self, response, encoding):
         self.assertEqual(response.encoding, resolve_encoding(encoding))
@@ -122,6 +127,18 @@ class BaseResponseTest(unittest.TestCase):
         joined = self.response_class('http://www.example.com').urljoin('/test')
         absolute = 'http://www.example.com/test'
         self.assertEqual(joined, absolute)
+
+    def test_shortcut_attributes(self):
+        r = self.response_class("http://example.com", body=b'hello')
+        if self.response_class == Response:
+            msg = "Response content isn't text"
+            self.assertRaisesRegexp(AttributeError, msg, getattr, r, 'text')
+            self.assertRaisesRegexp(NotSupported, msg, r.css, 'body')
+            self.assertRaisesRegexp(NotSupported, msg, r.xpath, '//body')
+        else:
+            r.text
+            r.css('body')
+            r.xpath('//body')
 
 
 class TextResponseTest(BaseResponseTest):
@@ -168,6 +185,10 @@ class TextResponseTest(BaseResponseTest):
         # check body_as_unicode
         self.assertTrue(isinstance(r1.body_as_unicode(), six.text_type))
         self.assertEqual(r1.body_as_unicode(), unicode_string)
+
+        # check response.text
+        self.assertTrue(isinstance(r1.text, six.text_type))
+        self.assertEqual(r1.text, unicode_string)
 
     def test_encoding(self):
         r1 = self.response_class("http://www.example.com", headers={"Content-type": ["text/html; charset=utf-8"]}, body=b"\xc2\xa3")
@@ -217,12 +238,12 @@ class TextResponseTest(BaseResponseTest):
                                  headers={"Content-type": ["text/html; charset=utf-8"]},
                                  body=b"\xef\xbb\xbfWORD\xe3\xab")
         self.assertEqual(r6.encoding, 'utf-8')
-        self.assertEqual(r6.body_as_unicode(), u'WORD\ufffd\ufffd')
+        self.assertEqual(r6.text, u'WORD\ufffd\ufffd')
 
     def test_bom_is_removed_from_body(self):
         # Inferring encoding from body also cache decoded body as sideeffect,
         # this test tries to ensure that calling response.encoding and
-        # response.body_as_unicode() in indistint order doesn't affect final
+        # response.text in indistint order doesn't affect final
         # values for encoding and decoded body.
         url = 'http://example.com'
         body = b"\xef\xbb\xbfWORD"
@@ -231,9 +252,9 @@ class TextResponseTest(BaseResponseTest):
         # Test response without content-type and BOM encoding
         response = self.response_class(url, body=body)
         self.assertEqual(response.encoding, 'utf-8')
-        self.assertEqual(response.body_as_unicode(), u'WORD')
+        self.assertEqual(response.text, u'WORD')
         response = self.response_class(url, body=body)
-        self.assertEqual(response.body_as_unicode(), u'WORD')
+        self.assertEqual(response.text, u'WORD')
         self.assertEqual(response.encoding, 'utf-8')
 
         # Body caching sideeffect isn't triggered when encoding is declared in
@@ -241,9 +262,9 @@ class TextResponseTest(BaseResponseTest):
         # body
         response = self.response_class(url, headers=headers, body=body)
         self.assertEqual(response.encoding, 'utf-8')
-        self.assertEqual(response.body_as_unicode(), u'WORD')
+        self.assertEqual(response.text, u'WORD')
         response = self.response_class(url, headers=headers, body=body)
-        self.assertEqual(response.body_as_unicode(), u'WORD')
+        self.assertEqual(response.text, u'WORD')
         self.assertEqual(response.encoding, 'utf-8')
 
     def test_replace_wrong_encoding(self):
@@ -251,18 +272,18 @@ class TextResponseTest(BaseResponseTest):
         r = self.response_class("http://www.example.com", encoding='utf-8', body=b'PREFIX\xe3\xabSUFFIX')
         # XXX: Policy for replacing invalid chars may suffer minor variations
         # but it should always contain the unicode replacement char (u'\ufffd')
-        assert u'\ufffd' in r.body_as_unicode(), repr(r.body_as_unicode())
-        assert u'PREFIX' in r.body_as_unicode(), repr(r.body_as_unicode())
-        assert u'SUFFIX' in r.body_as_unicode(), repr(r.body_as_unicode())
+        assert u'\ufffd' in r.text, repr(r.text)
+        assert u'PREFIX' in r.text, repr(r.text)
+        assert u'SUFFIX' in r.text, repr(r.text)
 
         # Do not destroy html tags due to encoding bugs
         r = self.response_class("http://example.com", encoding='utf-8', \
                 body=b'\xf0<span>value</span>')
-        assert u'<span>value</span>' in r.body_as_unicode(), repr(r.body_as_unicode())
+        assert u'<span>value</span>' in r.text, repr(r.text)
 
         # FIXME: This test should pass once we stop using BeautifulSoup's UnicodeDammit in TextResponse
-        #r = self.response_class("http://www.example.com", body='PREFIX\xe3\xabSUFFIX')
-        #assert u'\ufffd' in r.body_as_unicode(), repr(r.body_as_unicode())
+        #r = self.response_class("http://www.example.com", body=b'PREFIX\xe3\xabSUFFIX')
+        #assert u'\ufffd' in r.text, repr(r.text)
 
     def test_selector(self):
         body = b"<html><head><title>Some page</title><body></body></html>"
